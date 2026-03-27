@@ -1,9 +1,4 @@
-export type HardwareCategory =
-  | 'printer'
-  | 'bill-validator'
-  | 'coin-validator'
-  | 'nfc'
-  | 'barcode';
+export type HardwareCategory = 'printer' | 'bill-validator' | 'coin-validator' | 'nfc' | 'barcode';
 
 export type HardwareConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
 
@@ -74,4 +69,67 @@ export type ReceiptLine =
 export interface PrintResult {
   success: boolean;
   errorMessage?: string;
+}
+
+// ── Printer-specific status ──
+
+export interface PrinterStatus {
+  paperLow: boolean;
+  coverOpen: boolean;
+  errorState: string | null;
+}
+
+// ── Validator states ──
+
+export type BillValidatorState =
+  | 'idle'
+  | 'accepting'
+  | 'escrowed'
+  | 'stacking'
+  | 'returning'
+  | 'disabled'
+  | 'error';
+
+export type CoinValidatorState = 'idle' | 'accepting' | 'disabled' | 'error';
+
+// ── Adapter config types for different communication protocols ──
+
+export interface SerialAdapterConfig {
+  port: string;
+  baudRate: number;
+}
+
+export interface USBAdapterConfig {
+  vendorId: number;
+  productId: number;
+}
+
+export interface NetworkAdapterConfig {
+  host: string;
+  port: number;
+}
+
+// ── Hardware error codes ──
+
+export enum HardwareErrorCode {
+  CONNECTION_FAILED = 'CONNECTION_FAILED',
+  CONNECTION_LOST = 'CONNECTION_LOST',
+  COMMAND_TIMEOUT = 'COMMAND_TIMEOUT',
+  DEVICE_BUSY = 'DEVICE_BUSY',
+  PAPER_JAM = 'PAPER_JAM',
+  PAPER_OUT = 'PAPER_OUT',
+  BILL_JAM = 'BILL_JAM',
+  CASH_BOX_FULL = 'CASH_BOX_FULL',
+  CASH_BOX_REMOVED = 'CASH_BOX_REMOVED',
+  UNKNOWN_DEVICE = 'UNKNOWN_DEVICE',
+  PROTOCOL_ERROR = 'PROTOCOL_ERROR',
+  NOT_INITIALIZED = 'NOT_INITIALIZED',
+}
+
+// ── Mock adapter configuration ──
+
+export interface MockAdapterOptions {
+  simulationIntervalMs?: number;
+  failureRate?: number;
+  autoStart?: boolean;
 }
