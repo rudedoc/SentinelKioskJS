@@ -3,6 +3,10 @@ import type { KioskConfig } from '@kioskos/shared-types';
 import type { HardwareEventRepo } from '../db/repositories/HardwareEventRepo';
 import { HardwareManager } from './HardwareManager';
 import { buildAdapterFactory } from './AdapterFactory';
+import type { BillValidatorAdapter } from './adapters/bill-validators/BillValidatorAdapter';
+import type { CoinValidatorAdapter } from './adapters/coin-validators/CoinValidatorAdapter';
+import type { NFCAdapter } from './adapters/nfc/NFCAdapter';
+import type { BarcodeAdapter } from './adapters/barcode/BarcodeAdapter';
 
 const IS_MOCK = process.env.KIOSKOS_MOCK_HARDWARE === 'true';
 
@@ -98,7 +102,17 @@ async function setupMockAdapters(
       const adapter = factory.createAdapter(mock.name, mock.id, logger);
       manager.register(mock.id, adapter);
       await adapter.connect(mock.config as never);
-      logger.info('Mock adapter connected', { id: mock.id, name: mock.name });
+
+      // Auto-enable mock adapters so events flow immediately in dev
+      if ('enable' in adapter) {
+        await (adapter as BillValidatorAdapter | CoinValidatorAdapter).enable();
+      } else if ('startPolling' in adapter) {
+        await (adapter as NFCAdapter).startPolling();
+      } else if ('startListening' in adapter) {
+        await (adapter as BarcodeAdapter).startListening();
+      }
+
+      logger.info('Mock adapter connected and enabled', { id: mock.id, name: mock.name });
     } catch (err) {
       logger.error('Failed to create mock adapter', {
         name: mock.name,
