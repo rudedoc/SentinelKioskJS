@@ -4,9 +4,15 @@ import { createMainWindow, createWebAppView, getMainWindow } from './window';
 import { loadConfig } from './config-loader';
 import { createModuleLogger } from './logger';
 import { initializeDatabase, closeDatabase } from './db/database';
+import { HardwareEventRepo } from './db/repositories/HardwareEventRepo';
 import { registerIPCHandlers } from './ipc/register';
+import { registerHardwareEventForwarding } from './ipc/hardwareEvents';
+import { createHardwareStack } from './hardware/createHardwareStack';
+import type { HardwareManager } from './hardware/HardwareManager';
 
 const log = createModuleLogger('main');
+
+let hardwareManager: HardwareManager | null = null;
 
 // Prevent multiple instances
 const gotLock = app.requestSingleInstanceLock();
@@ -15,7 +21,7 @@ if (!gotLock) {
   app.quit();
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   log.info('App ready, starting initialization');
 
   // Load configuration
@@ -26,8 +32,15 @@ app.whenReady().then(() => {
   const db = initializeDatabase();
   log.info('Database initialized');
 
+  // Initialize hardware stack
+  const hardwareEventRepo = new HardwareEventRepo(db);
+  hardwareManager = await createHardwareStack(config, hardwareEventRepo, log);
+  log.info('Hardware stack initialized', {
+    adapters: hardwareManager.healthCheck().devices.length,
+  });
+
   // Register IPC handlers
-  registerIPCHandlers(db, config);
+  registerIPCHandlers(db, config, hardwareManager);
   log.info('IPC handlers registered');
 
   // Set app user model id for Windows
@@ -41,8 +54,9 @@ app.whenReady().then(() => {
   // Create the main window
   const mainWindow = createMainWindow(config);
 
-  // Once main window is ready, create the web app BrowserView
+  // Once main window is ready, set up hardware event forwarding and web app view
   mainWindow.once('ready-to-show', () => {
+    registerHardwareEventForwarding(hardwareManager!, mainWindow, log);
     createWebAppView(config);
   });
 
@@ -62,7 +76,11 @@ app.whenReady().then(() => {
   });
 });
 
-app.on('window-all-closed', () => {
+app.on('window-all-closed', async () => {
+  if (hardwareManager) {
+    await hardwareManager.disconnectAll();
+    log.info('Hardware adapters disconnected');
+  }
   closeDatabase();
   if (process.platform !== 'darwin') {
     app.quit();
