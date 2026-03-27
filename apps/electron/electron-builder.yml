@@ -1,0 +1,26 @@
+appId: com.kioskos.app
+productName: KioskOS
+directories:
+  buildResources: resources
+  output: dist
+files:
+  - '!**/.vscode/*'
+  - '!src/*'
+  - '!electron.vite.config.{js,ts,mjs,cjs}'
+  - '!{.eslintignore,.eslintrc.cjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
+  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  - '!{vitest.config.ts}'
+linux:
+  target: AppImage
+  category: Utility
+win:
+  target: nsis
+nsis:
+  oneClick: true
+  perMachine: true
+mac:
+  target: dmg
+  hardenedRuntime: true
+publish:
+  provider: generic
+  url: https://update.example.com
