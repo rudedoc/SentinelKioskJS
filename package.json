@@ -13,13 +13,25 @@
     "lint:fix": "turbo run lint:fix",
     "format": "prettier --write \"**/*.{ts,vue,json,md,yml,yaml}\"",
     "format:check": "prettier --check \"**/*.{ts,vue,json,md,yml,yaml}\"",
-    "clean": "turbo run clean && rm -rf node_modules"
+    "clean": "turbo run clean && rm -rf node_modules",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "*.{ts,vue}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,yml,yaml}": [
+      "prettier --write"
+    ]
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "eslint": "^10.1.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.5",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.4.0",
     "prettier": "^3.8.1",
     "turbo": "^2.8.20",
     "typescript": "^5.9.3",

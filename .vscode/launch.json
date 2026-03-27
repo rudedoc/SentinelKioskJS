@@ -1,0 +1,41 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug Main Process",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/apps/electron",
+      "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/electron",
+      "args": [".", "--remote-debugging-port=9222"],
+      "env": {
+        "NODE_ENV": "development",
+        "KIOSKOS_LOG_LEVEL": "debug"
+      },
+      "sourceMaps": true,
+      "outFiles": ["${workspaceFolder}/apps/electron/out/**/*.js"]
+    },
+    {
+      "name": "Debug Renderer (Chrome)",
+      "type": "chrome",
+      "request": "attach",
+      "port": 9222,
+      "webRoot": "${workspaceFolder}/apps/electron/src/renderer"
+    },
+    {
+      "name": "Debug Tests",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/apps/electron",
+      "runtimeExecutable": "pnpm",
+      "args": ["vitest", "run", "--reporter=verbose"],
+      "console": "integratedTerminal"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Debug Full App",
+      "configurations": ["Debug Main Process", "Debug Renderer (Chrome)"]
+    }
+  ]
+}
