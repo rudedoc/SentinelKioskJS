@@ -1,7 +1,6 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "composite": true,
     "paths": {
       "@kioskos/shared-types": ["../../packages/shared-types/src"],
       "@main/*": ["./src/main/*"],
@@ -9,8 +8,5 @@
       "@shared/*": ["./src/shared/*"]
     }
   },
-  "include": ["src"],
-  "references": [
-    { "path": "../../packages/shared-types" }
-  ]
+  "include": ["src"]
 }

@@ -62,9 +62,9 @@ export const DEFAULT_DEV_CONFIG: KioskConfig = {
   kioskId: 'kiosk-dev-001',
   environment: 'dev',
   webApp: {
-    url: 'https://example.com',
+    url: 'https://staging-v2.bxyz.link',
     fallbackPath: './resources/offline.html',
-    allowedOrigins: ['https://example.com', 'http://localhost:3000'],
+    allowedOrigins: ['https://staging-v2.bxyz.link', 'http://localhost:3000'],
   },
   hardware: {},
   network: {
