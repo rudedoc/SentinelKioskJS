@@ -1,4 +1,4 @@
-import { BrowserWindow, BrowserView } from 'electron';
+import { BrowserWindow, BrowserView, session } from 'electron';
 import { join } from 'path';
 import { is } from '@electron-toolkit/utils';
 import { KioskConfig } from '@kioskos/shared-types';
@@ -27,6 +27,7 @@ export function createMainWindow(config: KioskConfig): BrowserWindow {
     fullscreen: !isDev,
     frame: isDev,
     show: false,
+    backgroundColor: '#ffffff',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -90,6 +91,10 @@ export function createMainWindow(config: KioskConfig): BrowserWindow {
 export function createWebAppView(config: KioskConfig): BrowserView {
   if (!mainWindow) throw new Error('Main window must exist before creating web app view');
 
+  // Use a separate session for the web app so the kiosk shell's
+  // restrictive CSP doesn't block the web app's external resources
+  const webAppSession = session.fromPartition('persist:webapp');
+
   webAppView = new BrowserView({
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -97,9 +102,11 @@ export function createWebAppView(config: KioskConfig): BrowserView {
       nodeIntegration: false,
       sandbox: true,
       devTools: is.dev || !config.security.disableDevTools,
+      session: webAppSession,
     },
   });
 
+  webAppView.webContents.setBackgroundThrottling(false);
   mainWindow.setBrowserView(webAppView);
 
   // Size the BrowserView to fill the window
@@ -112,6 +119,13 @@ export function createWebAppView(config: KioskConfig): BrowserView {
   webAppView.webContents.loadURL(config.webApp.url).catch((err) => {
     log.error('Failed to load web app, loading fallback', { error: String(err) });
     webAppView?.webContents.loadFile(join(__dirname, '../renderer/webview/offline.html'));
+  });
+
+  // Once the web app loads, clear the loading screen behind it
+  webAppView.webContents.on('did-finish-load', () => {
+    log.info('Web app loaded, clearing loading screen');
+    mainWindow?.webContents.executeJavaScript('document.body.innerHTML = "";');
+    mainWindow?.setBackgroundColor('#ffffff');
   });
 
   return webAppView;
