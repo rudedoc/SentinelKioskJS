@@ -6,6 +6,7 @@ coverage/
 *.db-wal
 *.db-shm
 .turbo/
+*.tsbuildinfo
 .env
 .env.*
 !.env.example
