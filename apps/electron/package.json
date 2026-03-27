@@ -4,11 +4,13 @@
   "private": true,
   "main": "./out/main/index.js",
   "scripts": {
+    "predev": "electron-builder install-app-deps 2>/dev/null || true",
     "dev": "electron-vite dev",
     "dev:mock": "KIOSKOS_MOCK_HARDWARE=true electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit",
+    "pretest": "pnpm rebuild better-sqlite3 2>/dev/null || true",
     "test": "vitest run",
     "test:watch": "vitest watch",
     "test:coverage": "vitest run --coverage",

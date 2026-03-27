@@ -28,7 +28,7 @@ export class HardwareEventRepo {
     this.markSyncedStmt = db.prepare('UPDATE hardware_events SET synced = 1 WHERE id = ?');
 
     this.getRecentStmt = db.prepare(
-      'SELECT * FROM hardware_events ORDER BY created_at DESC LIMIT ?',
+      'SELECT * FROM hardware_events ORDER BY id DESC LIMIT ?',
     );
   }
 
