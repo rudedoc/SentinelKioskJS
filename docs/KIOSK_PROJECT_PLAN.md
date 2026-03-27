@@ -24,43 +24,43 @@
 
 ### 2.1 Electron Application
 
-| Layer | Technology | Notes |
-|---|---|---|
-| Runtime | Electron 33+ | Chromium + Node.js |
-| Language | TypeScript 5.x (strict mode) | Entire codebase |
-| Bundler | electron-vite | Fast HMR, native ESM |
-| UI Framework | Vue 3 Composition API (admin screens only) | Preload-isolated |
-| State | Pinia | Lightweight, Vue-native state management |
-| Local DB | better-sqlite3 | Synchronous, single-file, WAL mode |
-| IPC | Electron contextBridge + ipcMain/ipcRenderer | Typed channels |
-| Testing | Vitest + @testing-library/vue + Playwright (E2E) | Coverage gates |
-| Linting | ESLint flat config + Prettier | Pre-commit hooks |
-| Logging | winston (main) + structured JSON | Rotated files + stream to backend |
+| Layer        | Technology                                       | Notes                                    |
+| ------------ | ------------------------------------------------ | ---------------------------------------- |
+| Runtime      | Electron 33+                                     | Chromium + Node.js                       |
+| Language     | TypeScript 5.x (strict mode)                     | Entire codebase                          |
+| Bundler      | electron-vite                                    | Fast HMR, native ESM                     |
+| UI Framework | Vue 3 Composition API (admin screens only)       | Preload-isolated                         |
+| State        | Pinia                                            | Lightweight, Vue-native state management |
+| Local DB     | better-sqlite3                                   | Synchronous, single-file, WAL mode       |
+| IPC          | Electron contextBridge + ipcMain/ipcRenderer     | Typed channels                           |
+| Testing      | Vitest + @testing-library/vue + Playwright (E2E) | Coverage gates                           |
+| Linting      | ESLint flat config + Prettier                    | Pre-commit hooks                         |
+| Logging      | winston (main) + structured JSON                 | Rotated files + stream to backend        |
 
 ### 2.2 AWS Backend
 
-| Service | Purpose |
-|---|---|
-| AWS IoT Core | Real-time bidirectional MQTT between kiosk ↔ cloud |
-| AWS IoT Device Management | Fleet provisioning, thing groups, jobs (remote commands) |
-| Amazon Timestream | Time-series store for telemetry & transaction events |
-| Amazon S3 + CloudFront | Electron update hosting (auto-update artifacts) |
-| AWS Lambda | Event processors, report generators, Slack/email dispatch |
-| Amazon API Gateway (WebSocket) | Optional fallback if MQTT is blocked by network policy |
-| Amazon SES | Scheduled email reports |
-| Amazon SNS | Fan-out for alerts (Slack webhook, email, PagerDuty) |
-| AWS Systems Manager (SSM) | Secure parameter storage (VPN keys, secrets) |
-| Amazon CloudWatch | Central log aggregation (kiosk log streams) |
-| AWS CodePipeline + CodeBuild | CI/CD for Electron builds |
-| Sentry (SaaS) | Exception/error tracking with source maps |
+| Service                        | Purpose                                                   |
+| ------------------------------ | --------------------------------------------------------- |
+| AWS IoT Core                   | Real-time bidirectional MQTT between kiosk ↔ cloud        |
+| AWS IoT Device Management      | Fleet provisioning, thing groups, jobs (remote commands)  |
+| Amazon Timestream              | Time-series store for telemetry & transaction events      |
+| Amazon S3 + CloudFront         | Electron update hosting (auto-update artifacts)           |
+| AWS Lambda                     | Event processors, report generators, Slack/email dispatch |
+| Amazon API Gateway (WebSocket) | Optional fallback if MQTT is blocked by network policy    |
+| Amazon SES                     | Scheduled email reports                                   |
+| Amazon SNS                     | Fan-out for alerts (Slack webhook, email, PagerDuty)      |
+| AWS Systems Manager (SSM)      | Secure parameter storage (VPN keys, secrets)              |
+| Amazon CloudWatch              | Central log aggregation (kiosk log streams)               |
+| AWS CodePipeline + CodeBuild   | CI/CD for Electron builds                                 |
+| Sentry (SaaS)                  | Exception/error tracking with source maps                 |
 
 ### 2.3 Networking & IP Protection
 
-| Concern | Solution |
-|---|---|
+| Concern              | Solution                                                                               |
+| -------------------- | -------------------------------------------------------------------------------------- |
 | Hide kiosk public IP | AWS Client VPN or WireGuard mesh — all traffic egresses via a fixed AWS NAT Gateway IP |
-| Mutual TLS | IoT Core X.509 certs per device |
-| DNS | Private hosted zone over VPN for internal service resolution |
+| Mutual TLS           | IoT Core X.509 certs per device                                                        |
+| DNS                  | Private hosted zone over VPN for internal service resolution                           |
 
 ---
 
@@ -80,18 +80,13 @@ kioskos/
 │   │   │   │   │   ├── adapters/     # Per-device-model adapters
 │   │   │   │   │   │   ├── printers/
 │   │   │   │   │   │   │   ├── PrinterAdapter.ts        # Abstract base
-│   │   │   │   │   │   │   ├── EpsonTMT88Adapter.ts
-│   │   │   │   │   │   │   ├── StarTSP100Adapter.ts
 │   │   │   │   │   │   │   └── CustomVKP80Adapter.ts
 │   │   │   │   │   │   ├── bill-validators/
 │   │   │   │   │   │   │   ├── BillValidatorAdapter.ts  # Abstract base
-│   │   │   │   │   │   │   ├── MEISeriesAdapter.ts
-│   │   │   │   │   │   │   ├── ICTAdapter.ts
-│   │   │   │   │   │   │   └── JCMAdapter.ts
+│   │   │   │   │   │   │   └── NV9Adapter.ts
 │   │   │   │   │   │   ├── coin-validators/
 │   │   │   │   │   │   │   ├── CoinValidatorAdapter.ts
-│   │   │   │   │   │   │   ├── CoinCOINAdapter.ts
-│   │   │   │   │   │   │   └── AzkonoblyAdapter.ts
+│   │   │   │   │   │   │   └── G13Adapter.ts
 │   │   │   │   │   │   ├── nfc/
 │   │   │   │   │   │   │   ├── NFCAdapter.ts
 │   │   │   │   │   │   │   └── ACR122UAdapter.ts
@@ -244,15 +239,15 @@ class HardwareManager extends EventEmitter {
 
 #### Communication Protocols
 
-| Protocol | Node.js Library | Used By |
-|---|---|---|
-| Serial (RS-232 / USB-Serial) | `serialport` | Most bill validators, coin validators, some printers |
-| USB HID | `node-hid` | Barcode scanners, NFC readers |
-| USB (libusb) | `usb` | Some printers (direct USB) |
-| TCP/IP (Network) | `net` (built-in) | Network printers |
-| ESC/POS | `escpos` / custom | Thermal receipt printers |
-| ccTalk | Custom over serial | Coin validators (Azkoyen, etc.) |
-| MDB (via serial bridge) | Custom | Vending-style bill/coin acceptors |
+| Protocol                     | Node.js Library    | Used By                                              |
+| ---------------------------- | ------------------ | ---------------------------------------------------- |
+| Serial (RS-232 / USB-Serial) | `serialport`       | Most bill validators, coin validators, some printers |
+| USB HID                      | `node-hid`         | Barcode scanners, NFC readers                        |
+| USB (libusb)                 | `usb`              | Some printers (direct USB)                           |
+| TCP/IP (Network)             | `net` (built-in)   | Network printers                                     |
+| ESC/POS                      | `escpos` / custom  | Thermal receipt printers                             |
+| ccTalk                       | Custom over serial | Coin validators (Azkoyen, etc.)                      |
+| MDB (via serial bridge)      | Custom             | Vending-style bill/coin acceptors                    |
 
 #### Adapter Implementation Checklist (per adapter)
 
@@ -428,10 +423,10 @@ kioskos/{env}/{kioskId}/config          # Cloud → Kiosk: config updates (retai
 ```typescript
 interface KioskHeartbeat {
   kioskId: string;
-  timestamp: string;       // ISO 8601
+  timestamp: string; // ISO 8601
   appVersion: string;
-  uptime: number;          // seconds
-  cpu: number;             // percent
+  uptime: number; // seconds
+  cpu: number; // percent
   memoryMB: number;
   diskFreeGB: number;
   networkType: 'ethernet' | 'wifi' | 'cellular';
@@ -447,15 +442,15 @@ interface KioskHeartbeat {
 
 #### IoT Jobs (via AWS IoT Device Management)
 
-| Command | Payload | Effect |
-|---|---|---|
-| `disable` | `{ reason: string }` | Disables kiosk, shows out-of-service screen |
-| `enable` | `{}` | Re-enables kiosk |
-| `reboot` | `{ delay_seconds?: number }` | Reboots the machine |
-| `update` | `{ version: string, url: string }` | Triggers auto-update to specified version |
-| `sync_config` | `{ config: Partial<KioskConfig> }` | Pushes config changes |
-| `request_logs` | `{ since: string, until: string }` | Uploads log slice to S3 |
-| `run_diagnostic` | `{ tests: string[] }` | Runs hardware self-test, reports results |
+| Command          | Payload                            | Effect                                      |
+| ---------------- | ---------------------------------- | ------------------------------------------- |
+| `disable`        | `{ reason: string }`               | Disables kiosk, shows out-of-service screen |
+| `enable`         | `{}`                               | Re-enables kiosk                            |
+| `reboot`         | `{ delay_seconds?: number }`       | Reboots the machine                         |
+| `update`         | `{ version: string, url: string }` | Triggers auto-update to specified version   |
+| `sync_config`    | `{ config: Partial<KioskConfig> }` | Pushes config changes                       |
+| `request_logs`   | `{ since: string, until: string }` | Uploads log slice to S3                     |
+| `run_diagnostic` | `{ tests: string[] }`              | Runs hardware self-test, reports results    |
 
 #### Admin Panel Access
 
@@ -514,7 +509,7 @@ Winston (main process)
   "kioskId": "kiosk-dublin-001",
   "module": "hardware.bill-validator",
   "message": "Bill jam detected",
-  "metadata": { "adapter": "MEISeriesAdapter", "errorCode": "E04" },
+  "metadata": { "adapter": "NV9Adapter", "errorCode": "E04" },
   "sessionId": "sess_abc123",
   "traceId": "tr_xyz789"
 }
@@ -538,13 +533,13 @@ Winston (main process)
 
 #### Slack Notifications (via AWS Lambda + SNS)
 
-| Event | Channel | Severity |
-|---|---|---|
-| Kiosk offline > 5 min | `#kiosk-alerts` | Warning |
-| Cash jam / hardware error | `#kiosk-alerts` | Error |
-| Transaction anomaly | `#kiosk-alerts` | Warning |
-| Update applied | `#kiosk-updates` | Info |
-| Kiosk disabled remotely | `#kiosk-ops` | Info |
+| Event                     | Channel          | Severity |
+| ------------------------- | ---------------- | -------- |
+| Kiosk offline > 5 min     | `#kiosk-alerts`  | Warning  |
+| Cash jam / hardware error | `#kiosk-alerts`  | Error    |
+| Transaction anomaly       | `#kiosk-alerts`  | Warning  |
+| Update applied            | `#kiosk-updates` | Info     |
+| Kiosk disabled remotely   | `#kiosk-ops`     | Info     |
 
 #### Email Reports (via AWS Lambda + SES)
 
@@ -585,16 +580,16 @@ Schedule managed by EventBridge Scheduler → Lambda.
 ```typescript
 // In main process BrowserWindow creation
 const mainWindow = new BrowserWindow({
-  kiosk: true,              // Full-screen, no chrome
+  kiosk: true, // Full-screen, no chrome
   fullscreen: true,
   frame: false,
   webPreferences: {
     preload: join(__dirname, '../preload/index.js'),
-    contextIsolation: true,  // CRITICAL
-    nodeIntegration: false,  // CRITICAL
+    contextIsolation: true, // CRITICAL
+    nodeIntegration: false, // CRITICAL
     sandbox: true,
-    webviewTag: false,       // Use BrowserView instead
-    devTools: IS_DEV,        // Disabled in production
+    webviewTag: false, // Use BrowserView instead
+    devTools: IS_DEV, // Disabled in production
   },
 });
 
@@ -604,7 +599,7 @@ session.defaultSession.webRequest.onHeadersReceived((details, cb) => {
     responseHeaders: {
       ...details.responseHeaders,
       'Content-Security-Policy': [
-        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';"
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';",
       ],
     },
   });
@@ -653,21 +648,21 @@ pnpm run dev:mock      # Same but with mock hardware adapters
     "declarationMap": true,
     "sourceMap": true,
     "paths": {
-      "@kioskos/shared-types": ["./packages/shared-types/src"]
-    }
-  }
+      "@kioskos/shared-types": ["./packages/shared-types/src"],
+    },
+  },
 }
 ```
 
 ### 6.3 Testing Strategy
 
-| Layer | Tool | What to Test |
-|---|---|---|
-| Unit | Vitest | Adapters (mocked I/O), repositories, sync engine, IPC handlers |
-| Integration | Vitest + real SQLite | DB migrations, query correctness, sync queue logic |
-| Component | @testing-library/vue | Admin panel components |
-| E2E | Playwright + Electron | Full kiosk flow with mock hardware |
-| Hardware | Manual + scripts | Real device integration (documented in runbook) |
+| Layer       | Tool                  | What to Test                                                   |
+| ----------- | --------------------- | -------------------------------------------------------------- |
+| Unit        | Vitest                | Adapters (mocked I/O), repositories, sync engine, IPC handlers |
+| Integration | Vitest + real SQLite  | DB migrations, query correctness, sync queue logic             |
+| Component   | @testing-library/vue  | Admin panel components                                         |
+| E2E         | Playwright + Electron | Full kiosk flow with mock hardware                             |
+| Hardware    | Manual + scripts      | Real device integration (documented in runbook)                |
 
 ```bash
 pnpm run test              # Unit + integration
@@ -697,16 +692,16 @@ pnpm run test:e2e          # Playwright E2E
       "args": [".", "--remote-debugging-port=9222"],
       "env": { "NODE_ENV": "development" },
       "sourceMaps": true,
-      "outFiles": ["${workspaceFolder}/out/**/*.js"]
+      "outFiles": ["${workspaceFolder}/out/**/*.js"],
     },
     {
       "name": "Debug Renderer",
       "type": "chrome",
       "request": "attach",
       "port": 9222,
-      "webRoot": "${workspaceFolder}/src/renderer"
-    }
-  ]
+      "webRoot": "${workspaceFolder}/src/renderer",
+    },
+  ],
 }
 ```
 
@@ -864,9 +859,9 @@ KioskOS-MonitoringStack
 - [ ] Implement HardwareManager registry
 - [ ] Implement abstract adapters for all 5 categories
 - [ ] Build first concrete adapter per category:
-  - Printer: Epson TM-T88 (ESC/POS over USB)
-  - Bill Validator: MEI Series 2000 (serial)
-  - Coin Validator: Azkoyen Pelicano (ccTalk over serial)
+  - Printer: Custom VKP80 (ESC/POS over serial/USB)
+  - Bill Validator: NV9 (serial, SSP/eSSP protocol)
+  - Coin Validator: G13 (serial, ccTalk protocol)
   - NFC: ACR122U (PC/SC via `nfc-pcsc`)
   - Barcode: Honeywell HID keyboard-wedge
 - [ ] Mock adapter implementations for all categories
@@ -945,7 +940,7 @@ export interface KioskConfig {
 
   // Web app
   webAppUrl: string;
-  webAppFallbackPath: string;  // Local HTML shown when offline
+  webAppFallbackPath: string; // Local HTML shown when offline
 
   // Hardware
   hardware: {
@@ -964,14 +959,14 @@ export interface KioskConfig {
 
   // Telemetry
   telemetry: {
-    heartbeatIntervalMs: number;   // default: 30000
-    syncIntervalMs: number;        // default: 10000
+    heartbeatIntervalMs: number; // default: 30000
+    syncIntervalMs: number; // default: 10000
     logLevel: 'debug' | 'info' | 'warn' | 'error';
   };
 
   // Update
   update: {
-    checkIntervalMs: number;       // default: 900000 (15 min)
+    checkIntervalMs: number; // default: 900000 (15 min)
     autoInstall: boolean;
     channel: 'stable' | 'beta';
   };
@@ -980,7 +975,7 @@ export interface KioskConfig {
   admin: {
     pinHash: string;
     nfcAdminUIDs: string[];
-    sessionTimeoutMs: number;      // default: 300000 (5 min)
+    sessionTimeoutMs: number; // default: 300000 (5 min)
   };
 
   // Security
@@ -995,16 +990,16 @@ export interface KioskConfig {
 
 ## 11. Key Design Decisions & Rationale
 
-| Decision | Rationale |
-|---|---|
+| Decision                                  | Rationale                                                                                                                       |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | **better-sqlite3 over SQLite via Prisma** | Synchronous API avoids async complexity in main process; WAL mode handles concurrent reads; no ORM overhead for simple schemas. |
-| **MQTT (IoT Core) over WebSockets** | Purpose-built for IoT; handles millions of devices; built-in offline queuing, device shadows, jobs; mutual TLS. |
-| **WireGuard over OpenVPN** | Faster, lower overhead, simpler config; fits headless kiosk deployment. |
-| **electron-vite over Webpack** | 10x faster HMR; native ESM; purpose-built for Electron. |
-| **Adapter pattern for hardware** | New hardware = new file implementing an interface; zero changes to core. |
-| **BrowserView over \<webview\>** | `<webview>` is semi-deprecated; BrowserView is more stable and performant. |
-| **Sentry over self-hosted** | Source map handling, release tracking, breadcrumbs out of the box; not worth self-hosting for error tracking. |
-| **Timestream for telemetry** | Purpose-built time-series DB; auto-scales; built-in retention policies; cheaper than DynamoDB for this access pattern. |
+| **MQTT (IoT Core) over WebSockets**       | Purpose-built for IoT; handles millions of devices; built-in offline queuing, device shadows, jobs; mutual TLS.                 |
+| **WireGuard over OpenVPN**                | Faster, lower overhead, simpler config; fits headless kiosk deployment.                                                         |
+| **electron-vite over Webpack**            | 10x faster HMR; native ESM; purpose-built for Electron.                                                                         |
+| **Adapter pattern for hardware**          | New hardware = new file implementing an interface; zero changes to core.                                                        |
+| **BrowserView over \<webview\>**          | `<webview>` is semi-deprecated; BrowserView is more stable and performant.                                                      |
+| **Sentry over self-hosted**               | Source map handling, release tracking, breadcrumbs out of the box; not worth self-hosting for error tracking.                   |
+| **Timestream for telemetry**              | Purpose-built time-series DB; auto-scales; built-in retention policies; cheaper than DynamoDB for this access pattern.          |
 
 ---
 

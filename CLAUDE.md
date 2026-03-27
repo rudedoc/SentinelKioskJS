@@ -54,27 +54,35 @@ kioskos/
 ## Code Conventions
 
 ### Types first
+
 Define interfaces in `shared/types/` before writing implementation. Every IPC channel must be typed in the `KioskAPI` interface before implementing handler and preload bridge.
 
 ### One adapter = one file
-Each hardware adapter lives in its own file, named after the model (e.g., `EpsonTMT88Adapter.ts`). All adapters extend the category abstract base class.
+
+Each hardware adapter lives in its own file, named after the model (e.g., `CustomVKP80Adapter.ts`). All adapters extend the category abstract base class.
 
 ### Dependency injection
+
 Pass dependencies (db, logger, config) via constructor. Never import singletons.
 
 ### Typed errors
+
 Use `KioskError` base class with error codes. Hardware errors extend `HardwareError`.
 
 ### Testing
+
 Write tests alongside implementation using AAA pattern (Arrange, Act, Assert). No module is complete without unit tests. Mock serial/USB ports for hardware adapter tests.
 
 ### Logging
+
 Every hardware event, IPC call, sync operation, and state change gets a structured JSON log entry via winston.
 
 ### Environment guards
+
 Dev-only features (mock hardware, dev tools, verbose logging) must be behind `IS_DEV` checks.
 
 ### Config
+
 Loaded once at startup from a JSON file, merged with `local_config` DB overrides.
 
 ## Architecture Decisions
