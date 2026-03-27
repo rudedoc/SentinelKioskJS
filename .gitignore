@@ -1,0 +1,14 @@
+node_modules/
+dist/
+out/
+coverage/
+*.db
+*.db-wal
+*.db-shm
+.turbo/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
