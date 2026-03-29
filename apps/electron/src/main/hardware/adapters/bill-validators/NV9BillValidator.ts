@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events';
-import SSP from 'encrypted-smiley-secure-protocol';
+import { SSPConnection } from './ssp/SSPConnection';
+import { SSPCommand, SSPEvent, REJECT_REASONS, type SSPPollEvent } from './ssp/SSPTypes';
 
 // ============================================================
 // Types
@@ -14,7 +15,7 @@ export interface NV9Options {
   protocolVersion?: number;
   /** Fixed encryption key (16 hex chars). Default: factory key */
   fixedKey?: string;
-  /** Use eSSP encryption. Default: false */
+  /** Use eSSP encryption. Default: false (encryption not supported in custom SSP) */
   useEncryption?: boolean;
   /** Channel-to-value mapping. Keys are channel numbers, values are amounts. */
   channelValues: Record<number, number>;
@@ -49,78 +50,48 @@ export interface NV9NoteEvent {
 export type NV9Status = 'disconnected' | 'connecting' | 'enabled' | 'disabled' | 'error';
 
 export interface NV9State {
-  /** Current device status */
   status: NV9Status;
-  /** Whether the cashbox is present */
   cashboxPresent: boolean;
-  /** Whether the stacker is full */
   stackerFull: boolean;
-  /** Whether a note jam has been detected */
   jammed: boolean;
-  /** Whether note path is open */
   notePathOpen: boolean;
-  /** Whether a note is currently held in escrow */
   noteHeld: boolean;
-  /** Device serial number (set after initialization) */
   serialNumber: string | null;
 }
 
 export interface NV9Events {
-  /** Device is connected and ready to accept notes */
   ready: [];
-  /** A note has been identified and is in escrow (escrow mode) or being accepted */
   escrow: [event: NV9NoteEvent];
-  /** A note has been credited (stacked successfully) */
   credit: [event: NV9NoteEvent];
-  /** Note is being rejected (in transit back to user) */
   rejecting: [];
-  /** A note was rejected — call rejectReason for details */
   rejected: [reason?: Record<string, unknown>];
-  /** Note is being stacked (moving to cashbox) */
   stacking: [];
-  /** Note has been physically stacked in cashbox */
   stacked: [];
-  /** Cashbox was removed */
   cashboxRemoved: [];
-  /** Cashbox was replaced */
   cashboxReplaced: [];
-  /** Stacker is full */
   stackerFull: [];
-  /** Note jam (safe — not user-accessible) */
   safeJam: [];
-  /** Note jam (unsafe — user may be able to remove) */
   unsafeJam: [];
-  /** Fraud attempt detected */
   fraud: [event: NV9NoteEvent];
-  /** Device reported disabled state */
   disabled: [];
-  /** Device has reset (power cycle or RESET command) */
   slaveReset: [];
-  /** Note was cleared from the front of the device at reset */
   noteClearedFromFront: [event: NV9NoteEvent];
-  /** Note was cleared into the cashbox at reset */
   noteClearedToCashbox: [event: NV9NoteEvent];
-  /** Note path is open — device cannot accept notes */
   notePathOpen: [];
-  /** All channels have been inhibited */
   channelDisable: [];
-  /** Serial port opened */
   open: [];
-  /** Serial port closed */
   close: [];
-  /** Non-fatal error during operation */
   error: [error: Error];
-  /** Device state changed */
   stateChange: [state: NV9State];
-  /** Reconnection attempt */
   reconnecting: [attempt: number, maxAttempts: number];
-  /** Reconnection succeeded */
   reconnected: [];
 }
 
 // ============================================================
 // Implementation
 // ============================================================
+
+const POLL_INTERVAL_MS = 100;
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
 export interface NV9BillValidator {
@@ -132,7 +103,7 @@ export interface NV9BillValidator {
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
 export class NV9BillValidator extends EventEmitter {
-  private eSSP: InstanceType<typeof SSP> | null = null;
+  private ssp: SSPConnection | null = null;
   private running = false;
   private _status: NV9Status = 'disconnected';
   private _cashboxPresent = true;
@@ -189,7 +160,6 @@ export class NV9BillValidator extends EventEmitter {
     };
   }
 
-  /** Current device state snapshot. Always available, no async needed. */
   get state(): NV9State {
     return {
       status: this._status,
@@ -202,9 +172,8 @@ export class NV9BillValidator extends EventEmitter {
     };
   }
 
-  /** Open the serial connection and initialize the device. */
   connect(): void {
-    if (this.eSSP) {
+    if (this.ssp) {
       throw new Error('Already connected. Call disconnect() first.');
     }
 
@@ -216,83 +185,76 @@ export class NV9BillValidator extends EventEmitter {
     this.openConnection();
   }
 
-  /** Disable the device and close the serial connection. */
   async disconnect(): Promise<void> {
     this._intentionalDisconnect = true;
     this.cancelReconnect();
     this.stopHoldLoop();
 
-    if (!this.eSSP || !this.running) {
+    if (!this.ssp || !this.running) {
       this.running = false;
       return;
     }
     this.running = false;
 
     try {
-      await this.eSSP.disable();
+      this.ssp.stopPolling();
+      await this.ssp.sendCommand(SSPCommand.DISABLE);
     } catch {
       // best-effort
     }
 
     try {
-      this.eSSP.close();
+      await this.ssp.close();
     } catch {
       // best-effort
     }
 
-    this.eSSP = null;
+    this.ssp = null;
     this._noteHeld = false;
     this.updateStatus('disconnected');
   }
 
-  /**
-   * Accept the note currently held in escrow (stacks it into the cashbox).
-   * Stops sending HOLD — the next poll will cause the device to stack the note.
-   */
   acceptNote(): void {
     if (!this._noteHeld) return;
     this.stopHoldLoop();
     this._noteHeld = false;
     this.emitStateChange();
-    // Polling continues — next poll causes the device to stack the note
+
+    // Resume polling — next poll causes the device to stack the note
+    if (this.ssp) {
+      this.ssp.startPolling(POLL_INTERVAL_MS, (events) => this.handlePollEvents(events));
+    }
   }
 
-  /**
-   * Reject the note currently held in escrow (returns it to the user).
-   * Sends REJECT command to the device.
-   */
   async rejectNote(): Promise<void> {
-    if (!this._noteHeld || !this.eSSP) return;
+    if (!this._noteHeld || !this.ssp) return;
     this.stopHoldLoop();
     this._noteHeld = false;
     this.emitStateChange();
-    await this.eSSP.command('REJECT_BANKNOTE');
+    await this.ssp.sendCommand(SSPCommand.REJECT);
+
+    // Resume polling
+    this.ssp.startPolling(POLL_INTERVAL_MS, (events) => this.handlePollEvents(events));
   }
 
-  /**
-   * Attempt to recover the device from a jammed/disabled/error state.
-   * Sends SYNC to reset the SSP state machine, re-configures channels,
-   * and re-enables the device. Clears the jammed flag if successful.
-   */
   async recover(): Promise<void> {
-    if (!this.eSSP) {
+    if (!this.ssp) {
       throw new Error('Not connected. Call connect() first.');
     }
 
-    const eSSP = this.eSSP;
+    await this.ssp.sendCommand(SSPCommand.SYNC);
+    this.ssp.resetSequence();
 
-    await eSSP.command('SYNC');
+    await this.ssp.sendCommand(
+      SSPCommand.HOST_PROTOCOL_VERSION,
+      Buffer.from([this.opts.protocolVersion]),
+    );
 
-    await eSSP.command('HOST_PROTOCOL_VERSION', {
-      version: this.opts.protocolVersion,
-    });
+    await this.ssp.sendCommand(SSPCommand.SET_INHIBITS, this.buildInhibitBytes());
 
-    const channels = Object.keys(this.opts.channelValues).map(() => 1);
-    await eSSP.command('SET_CHANNEL_INHIBITS', { channels });
-
-    const result = await eSSP.enable();
-    if (result.status !== 'OK') {
-      throw new Error(`Recovery failed — device did not re-enable: ${result.status}`);
+    const result = await this.ssp.sendCommand(SSPCommand.ENABLE);
+    if (!result.success) {
+      throw new Error('Recovery failed — device did not re-enable');
     }
 
     this._jammed = false;
@@ -300,28 +262,24 @@ export class NV9BillValidator extends EventEmitter {
     this._notePathOpen = false;
     this._noteHeld = false;
     this.updateStatus('enabled');
+
+    this.ssp.startPolling(POLL_INTERVAL_MS, (events) => this.handlePollEvents(events));
     this.emit('ready');
   }
 
-  /**
-   * Send a hardware RESET command to the device, forcing a full firmware
-   * restart (equivalent to a power cycle). The serial connection stays open
-   * and the device will fire DISABLED events as it reboots, then the class
-   * will re-initialize automatically via the OPEN/DISABLED → recover path.
-   */
   async reset(): Promise<void> {
-    if (!this.eSSP) {
+    if (!this.ssp) {
       throw new Error('Not connected. Call connect() first.');
     }
 
-    await this.eSSP.command('RESET');
+    this.ssp.stopPolling();
+    await this.ssp.sendCommand(SSPCommand.RESET);
     this._jammed = false;
     this._stackerFull = false;
     this._noteHeld = false;
     this.updateStatus('connecting');
   }
 
-  /** Map a channel number to its currency value. */
   channelValue(channel: number): number {
     return this.opts.channelValues[channel] ?? 0;
   }
@@ -329,16 +287,41 @@ export class NV9BillValidator extends EventEmitter {
   // ---- private ---------------------------------------------------
 
   private openConnection(): void {
-    this.eSSP = new SSP({
-      id: this.opts.slaveId,
-      debug: this.opts.debug,
+    this.ssp = new SSPConnection({
+      port: this.opts.port,
+      address: this.opts.slaveId,
+      baudRate: 9600,
       timeout: this.opts.timeout,
-      fixedKey: this.opts.fixedKey,
-      encryptAllCommand: this.opts.useEncryption,
     });
 
-    this.bindEvents(this.eSSP);
-    this.eSSP.open(this.opts.port);
+    this.ssp.on('close', () => {
+      this.updateStatus('disconnected');
+      this._noteHeld = false;
+      this.emit('close');
+
+      if (this.running && !this._intentionalDisconnect && !this._reconnectTimer) {
+        this.ssp = null;
+        this.scheduleReconnect();
+      }
+    });
+
+    this.ssp.on('error', (err: Error) => {
+      this.emit('error', err);
+    });
+
+    this.ssp
+      .open()
+      .then(() => {
+        this.emit('open');
+        return this.initialize();
+      })
+      .catch((err: unknown) => {
+        this.updateStatus('error');
+        this.emit('error', err instanceof Error ? err : new Error(String(err)));
+        if (this.running && !this._intentionalDisconnect) {
+          this.scheduleReconnect();
+        }
+      });
   }
 
   private cancelReconnect(): void {
@@ -351,7 +334,6 @@ export class NV9BillValidator extends EventEmitter {
   private scheduleReconnect(): void {
     if (this._intentionalDisconnect) return;
     if (this.opts.maxReconnectAttempts === 0) return;
-    // Prevent duplicate schedules (e.g. both init failure and CLOSE firing)
     if (this._reconnectTimer) return;
     if (this._reconnectAttempt >= this.opts.maxReconnectAttempts) {
       this.emit(
@@ -368,23 +350,18 @@ export class NV9BillValidator extends EventEmitter {
       this._reconnectTimer = null;
       if (!this.running || this._intentionalDisconnect) return;
 
-      // Clean up old connection — close and wait for CLOSE event
-      // before reopening to avoid port locking
-      if (this.eSSP) {
-        const oldSSP = this.eSSP;
-        this.eSSP = null;
-        try {
-          oldSSP.close();
-        } catch {
-          /* ignore */
-        }
-        // The CLOSE handler will fire, but since eSSP is already null
-        // it won't trigger another reconnect. Give the OS time to
-        // release the port.
-        setTimeout(() => {
-          if (!this.running || this._intentionalDisconnect) return;
-          this.attemptReconnect();
-        }, 500);
+      if (this.ssp) {
+        const oldSSP = this.ssp;
+        this.ssp = null;
+        oldSSP
+          .close()
+          .catch(() => {})
+          .finally(() => {
+            setTimeout(() => {
+              if (!this.running || this._intentionalDisconnect) return;
+              this.attemptReconnect();
+            }, 500);
+          });
       } else {
         this.attemptReconnect();
       }
@@ -437,194 +414,180 @@ export class NV9BillValidator extends EventEmitter {
     }
   }
 
-  private bindEvents(eSSP: InstanceType<typeof SSP>): void {
-    eSSP.on('OPEN', () => {
-      this.emit('open');
-      this.initialize(eSSP).catch((err: unknown) => {
-        this.updateStatus('error');
-        this.emit('error', err instanceof Error ? err : new Error(String(err)));
-        // If init fails, attempt reconnection
-        if (this.running && !this._intentionalDisconnect) {
-          this.scheduleReconnect();
+  /**
+   * Handle events from the POLL response.
+   * This replaces the old bindEvents() method — instead of 18+ eSSP event listeners,
+   * we process all events in a single callback from the poll loop.
+   */
+  private handlePollEvents(events: SSPPollEvent[]): void {
+    for (const evt of events) {
+      switch (evt.code) {
+        case SSPEvent.READ_NOTE: {
+          if (evt.channel && evt.channel > 0 && !this._noteHeld) {
+            this.emit('escrow', {
+              channel: evt.channel,
+              value: this.channelValue(evt.channel),
+            });
+
+            if (this.opts.escrow) {
+              this._noteHeld = true;
+              this.emitStateChange();
+              this.startHoldLoop();
+            }
+          }
+          break;
         }
-      });
-    });
-
-    eSSP.on('CLOSE', () => {
-      this.updateStatus('disconnected');
-      this._noteHeld = false;
-      this.emit('close');
-
-      // Auto-reconnect on unexpected disconnect, but only if no
-      // reconnection is already scheduled (e.g. from init failure)
-      if (this.running && !this._intentionalDisconnect && !this._reconnectTimer) {
-        this.eSSP = null;
-        this.scheduleReconnect();
-      }
-    });
-
-    // ---- Note lifecycle ----
-
-    eSSP.on('READ_NOTE', (result) => {
-      if (result.channel > 0 && !this._noteHeld) {
-        this.emit('escrow', {
-          channel: result.channel,
-          value: this.channelValue(result.channel),
-        });
-
-        if (this.opts.escrow) {
-          this._noteHeld = true;
+        case SSPEvent.CREDIT_NOTE: {
+          this._noteHeld = false;
+          if (evt.channel) {
+            this.emit('credit', {
+              channel: evt.channel,
+              value: this.channelValue(evt.channel),
+            });
+          }
           this.emitStateChange();
-          // Stop polling and enter a HOLD loop — sends HOLD every 200ms
-          // to keep the note in escrow until acceptNote() or rejectNote().
-          this.startHoldLoop(eSSP);
+          break;
+        }
+        case SSPEvent.REJECTING: {
+          this._noteHeld = false;
+          this.emit('rejecting');
+          this.emitStateChange();
+          break;
+        }
+        case SSPEvent.REJECTED: {
+          this._noteHeld = false;
+          this.emitStateChange();
+          this.queryRejectReason();
+          break;
+        }
+        case SSPEvent.STACKING: {
+          this.emit('stacking');
+          break;
+        }
+        case SSPEvent.STACKED: {
+          this._noteHeld = false;
+          this.emit('stacked');
+          this.emitStateChange();
+          break;
+        }
+        case SSPEvent.DISABLED: {
+          this.updateStatus('disabled');
+          this.emit('disabled');
+          break;
+        }
+        case SSPEvent.CASHBOX_REMOVED: {
+          this.updateState({ cashboxPresent: false });
+          this.emit('cashboxRemoved');
+          break;
+        }
+        case SSPEvent.CASHBOX_REPLACED: {
+          this.updateState({ cashboxPresent: true });
+          this.emit('cashboxReplaced');
+          break;
+        }
+        case SSPEvent.STACKER_FULL: {
+          this.updateState({ stackerFull: true });
+          this.emit('stackerFull');
+          break;
+        }
+        case SSPEvent.SAFE_JAM: {
+          this._noteHeld = false;
+          this.updateState({ jammed: true });
+          this.emit('safeJam');
+          break;
+        }
+        case SSPEvent.UNSAFE_JAM: {
+          this._noteHeld = false;
+          this.updateState({ jammed: true });
+          this.emit('unsafeJam');
+          break;
+        }
+        case SSPEvent.FRAUD_ATTEMPT: {
+          if (evt.channel) {
+            this.emit('fraud', {
+              channel: evt.channel,
+              value: this.channelValue(evt.channel),
+            });
+          }
+          break;
+        }
+        case SSPEvent.SLAVE_RESET: {
+          this.emit('slaveReset');
+          if (this._expectSlaveReset) {
+            this._expectSlaveReset = false;
+          } else {
+            this.reinitialize().catch((err: unknown) => {
+              this.updateStatus('error');
+              this.emit('error', err instanceof Error ? err : new Error(String(err)));
+            });
+          }
+          break;
+        }
+        case SSPEvent.NOTE_CLEARED_FROM_FRONT: {
+          this._noteHeld = false;
+          if (evt.channel) {
+            this.emit('noteClearedFromFront', {
+              channel: evt.channel,
+              value: this.channelValue(evt.channel),
+            });
+          }
+          this.emitStateChange();
+          break;
+        }
+        case SSPEvent.NOTE_CLEARED_TO_CASHBOX: {
+          this._noteHeld = false;
+          if (evt.channel) {
+            this.emit('noteClearedToCashbox', {
+              channel: evt.channel,
+              value: this.channelValue(evt.channel),
+            });
+          }
+          this.emitStateChange();
+          break;
+        }
+        case SSPEvent.NOTE_PATH_OPEN: {
+          this.updateState({ notePathOpen: true });
+          this.emit('notePathOpen');
+          break;
+        }
+        case SSPEvent.CHANNEL_DISABLE: {
+          this.emit('channelDisable');
+          break;
         }
       }
-    });
-
-    eSSP.on('CREDIT_NOTE', (result) => {
-      this._noteHeld = false;
-      this.emit('credit', {
-        channel: result.channel,
-        value: this.channelValue(result.channel),
-      });
-      this.emitStateChange();
-    });
-
-    eSSP.on('NOTE_REJECTING', () => {
-      this._noteHeld = false;
-      this.emit('rejecting');
-      this.emitStateChange();
-    });
-
-    eSSP.on('NOTE_REJECTED', async (_result) => {
-      this._noteHeld = false;
-      this.emitStateChange();
-      let reason: Record<string, unknown> | undefined;
-      try {
-        const r = await eSSP.command('LAST_REJECT_CODE');
-        reason = r.info;
-      } catch {
-        // ignore — device may not support this command
-      }
-      this.emit('rejected', reason);
-    });
-
-    eSSP.on('NOTE_STACKING', () => {
-      this.emit('stacking');
-    });
-
-    eSSP.on('NOTE_STACKED', () => {
-      this._noteHeld = false;
-      this.emit('stacked');
-      this.emitStateChange();
-    });
-
-    // ---- Device status events ----
-
-    eSSP.on('DISABLED', () => {
-      this.updateStatus('disabled');
-      this.emit('disabled');
-    });
-
-    eSSP.on('CASHBOX_REMOVED', () => {
-      this.updateState({ cashboxPresent: false });
-      this.emit('cashboxRemoved');
-    });
-
-    eSSP.on('CASHBOX_REPLACED', () => {
-      this.updateState({ cashboxPresent: true });
-      this.emit('cashboxReplaced');
-    });
-
-    eSSP.on('STACKER_FULL', () => {
-      this.updateState({ stackerFull: true });
-      this.emit('stackerFull');
-    });
-
-    eSSP.on('SAFE_NOTE_JAM', () => {
-      this._noteHeld = false;
-      this.updateState({ jammed: true });
-      this.emit('safeJam');
-    });
-
-    eSSP.on('UNSAFE_NOTE_JAM', () => {
-      this._noteHeld = false;
-      this.updateState({ jammed: true });
-      this.emit('unsafeJam');
-    });
-
-    eSSP.on('FRAUD_ATTEMPT', (result) => {
-      this.emit('fraud', {
-        channel: result.channel,
-        value: this.channelValue(result.channel),
-      });
-    });
-
-    // ---- Reset/clear events ----
-
-    eSSP.on('SLAVE_RESET', () => {
-      this.emit('slaveReset');
-
-      if (this._expectSlaveReset) {
-        this._expectSlaveReset = false;
-      }
-
-      // Device has rebooted (either from our RESET or a power glitch)
-      // and is now in disabled state — re-run setup to bring it back.
-      this.reinitialize(eSSP).catch((err: unknown) => {
-        this.updateStatus('error');
-        this.emit('error', err instanceof Error ? err : new Error(String(err)));
-      });
-    });
-
-    eSSP.on('NOTE_CLEARED_FROM_FRONT', (result) => {
-      this._noteHeld = false;
-      this.emit('noteClearedFromFront', {
-        channel: result.channel,
-        value: this.channelValue(result.channel),
-      });
-      this.emitStateChange();
-    });
-
-    eSSP.on('NOTE_CLEARED_TO_CASHBOX', (result) => {
-      this._noteHeld = false;
-      this.emit('noteClearedToCashbox', {
-        channel: result.channel,
-        value: this.channelValue(result.channel),
-      });
-      this.emitStateChange();
-    });
-
-    eSSP.on('NOTE_PATH_OPEN', () => {
-      this.updateState({ notePathOpen: true });
-      this.emit('notePathOpen');
-    });
-
-    eSSP.on('CHANNEL_DISABLE', () => {
-      this.emit('channelDisable');
-    });
+    }
   }
 
-  /**
-   * Stop polling and repeatedly send HOLD to keep the note in escrow.
-   * The HOLD command resets the device's 10-second escrow timeout.
-   * We send it every 200ms via exec() (bypassing the poll pipeline).
-   */
-  private startHoldLoop(eSSP: InstanceType<typeof SSP>): void {
+  private async queryRejectReason(): Promise<void> {
+    if (!this.ssp) return;
+    try {
+      const result = await this.ssp.sendCommand(SSPCommand.LAST_REJECT_CODE);
+      if (result.success && result.data.length > 0) {
+        const code = result.data[0]!;
+        const reason = REJECT_REASONS[code] ?? `Unknown (0x${code.toString(16)})`;
+        this.emit('rejected', { code, reason });
+      } else {
+        this.emit('rejected');
+      }
+    } catch {
+      this.emit('rejected');
+    }
+  }
+
+  private startHoldLoop(): void {
     this.stopHoldLoop();
 
-    // Send HOLD immediately, then every 200ms.
-    // The library's poll loop is still running — command("HOLD") will
-    // stop polling, send HOLD, then restart polling. Each subsequent
-    // poll will get READ_NOTE again (note still in escrow), which
-    // triggers another HOLD via this timer.
+    if (!this.ssp) return;
+
+    // Stop polling during escrow hold to prevent command interleaving
+    this.ssp.stopPolling();
+
     const sendHold = () => {
-      if (!this._noteHeld || !this.running) {
+      if (!this._noteHeld || !this.running || !this.ssp) {
         this.stopHoldLoop();
         return;
       }
-      eSSP.command('HOLD').catch(() => {
+      this.ssp.sendCommand(SSPCommand.HOLD).catch(() => {
         // HOLD failed — note may auto-return after 10s
       });
     };
@@ -640,39 +603,54 @@ export class NV9BillValidator extends EventEmitter {
     }
   }
 
-  private async initialize(eSSP: InstanceType<typeof SSP>): Promise<void> {
-    // SYNC resets the SSP sequence counter, then RESET clears any stale
-    // jam/error state from a previous session (equivalent to power cycle).
-    // Note: the SSP library only emits poll events (like DISABLED) once
-    // polling is active, so we use a fixed delay for the reboot.
-    await eSSP.command('SYNC');
+  private buildInhibitBytes(): Buffer {
+    const channelCount = Object.keys(this.opts.channelValues).length;
+    const numBytes = Math.max(2, Math.ceil(channelCount / 8));
+    const mask = Buffer.alloc(numBytes, 0xff);
+    // Trim spare bits in final byte
+    if (channelCount % 8 !== 0) {
+      mask[numBytes - 1] = (1 << (channelCount % 8)) - 1;
+    }
+    return mask;
+  }
 
-    // Flag that the upcoming SLAVE_RESET poll event is expected (from our
-    // own RESET command) and should not trigger reinitialize.
+  private async initialize(): Promise<void> {
+    if (!this.ssp) throw new Error('No SSP connection');
+
+    if (this.opts.useEncryption) {
+      this.emit(
+        'error',
+        new Error(
+          'eSSP encryption is not supported in the custom SSP implementation. Continuing without encryption.',
+        ),
+      );
+    }
+
+    // SYNC resets the SSP sequence counter
+    await this.ssp.sendCommand(SSPCommand.SYNC);
+    this.ssp.resetSequence();
+
+    // RESET clears any stale jam/error state
     this._expectSlaveReset = true;
-    await eSSP.command('RESET');
+    await this.ssp.sendCommand(SSPCommand.RESET);
 
     // Wait for the device to finish rebooting
     await new Promise<void>((resolve) => setTimeout(resolve, this.opts.resetDelay));
 
     // Re-sync after reboot
-    await eSSP.command('SYNC');
+    await this.ssp.sendCommand(SSPCommand.SYNC);
+    this.ssp.resetSequence();
 
-    // Set protocol version before any data commands
-    await eSSP.command('HOST_PROTOCOL_VERSION', {
-      version: this.opts.protocolVersion,
-    });
+    // Set protocol version
+    await this.ssp.sendCommand(
+      SSPCommand.HOST_PROTOCOL_VERSION,
+      Buffer.from([this.opts.protocolVersion]),
+    );
 
-    // Negotiate encryption if enabled
-    if (this.opts.useEncryption) {
-      await eSSP.initEncryption();
-    }
-
-    // Query device identity
-    const serialResult = await eSSP.command('GET_SERIAL_NUMBER');
-    if (serialResult.info && serialResult.info.serial_number !== undefined) {
-      const newSerial = String(serialResult.info.serial_number);
-      // Detect device swap
+    // Query device serial number
+    const serialResult = await this.ssp.sendCommand(SSPCommand.GET_SERIAL_NUMBER);
+    if (serialResult.success && serialResult.data.length >= 4) {
+      const newSerial = serialResult.data.readUInt32BE(0).toString();
       if (this._serialNumber !== null && this._serialNumber !== newSerial) {
         this.emit(
           'error',
@@ -684,18 +662,17 @@ export class NV9BillValidator extends EventEmitter {
       this._serialNumber = newSerial;
     }
 
-    // Get unit metadata (firmware version, type, etc.)
-    await eSSP.command('UNIT_DATA');
-    await eSSP.command('SETUP_REQUEST');
+    // Get unit metadata and setup
+    await this.ssp.sendCommand(SSPCommand.UNIT_DATA);
+    await this.ssp.sendCommand(SSPCommand.SETUP_REQUEST);
 
     // Enable all configured channels
-    const channels = Object.keys(this.opts.channelValues).map(() => 1);
-    await eSSP.command('SET_CHANNEL_INHIBITS', { channels });
+    await this.ssp.sendCommand(SSPCommand.SET_INHIBITS, this.buildInhibitBytes());
 
-    // Enable the device — starts accepting notes
-    const result = await eSSP.enable();
-    if (result.status !== 'OK') {
-      throw new Error(`Failed to enable device: ${result.status}`);
+    // Enable the device
+    const result = await this.ssp.sendCommand(SSPCommand.ENABLE);
+    if (!result.success) {
+      throw new Error('Failed to enable device');
     }
 
     this._jammed = false;
@@ -708,6 +685,9 @@ export class NV9BillValidator extends EventEmitter {
 
     this.updateStatus('enabled');
 
+    // Start polling for events
+    this.ssp.startPolling(POLL_INTERVAL_MS, (events) => this.handlePollEvents(events));
+
     if (wasReconnecting) {
       this.emit('reconnected');
     }
@@ -715,29 +695,25 @@ export class NV9BillValidator extends EventEmitter {
     this.emit('ready');
   }
 
-  /**
-   * Re-run the setup sequence after the device reports SLAVE_RESET.
-   * Skips RESET (already happened) and serial number query (already known).
-   */
-  private async reinitialize(eSSP: InstanceType<typeof SSP>): Promise<void> {
-    await eSSP.command('SYNC');
+  private async reinitialize(): Promise<void> {
+    if (!this.ssp) throw new Error('No SSP connection');
 
-    await eSSP.command('HOST_PROTOCOL_VERSION', {
-      version: this.opts.protocolVersion,
-    });
+    this.ssp.stopPolling();
 
-    if (this.opts.useEncryption) {
-      await eSSP.initEncryption();
-    }
+    await this.ssp.sendCommand(SSPCommand.SYNC);
+    this.ssp.resetSequence();
 
-    await eSSP.command('SETUP_REQUEST');
+    await this.ssp.sendCommand(
+      SSPCommand.HOST_PROTOCOL_VERSION,
+      Buffer.from([this.opts.protocolVersion]),
+    );
 
-    const channels = Object.keys(this.opts.channelValues).map(() => 1);
-    await eSSP.command('SET_CHANNEL_INHIBITS', { channels });
+    await this.ssp.sendCommand(SSPCommand.SETUP_REQUEST);
+    await this.ssp.sendCommand(SSPCommand.SET_INHIBITS, this.buildInhibitBytes());
 
-    const result = await eSSP.enable();
-    if (result.status !== 'OK') {
-      throw new Error(`Re-enable after SLAVE_RESET failed: ${result.status}`);
+    const result = await this.ssp.sendCommand(SSPCommand.ENABLE);
+    if (!result.success) {
+      throw new Error('Re-enable after SLAVE_RESET failed');
     }
 
     this._jammed = false;
@@ -745,6 +721,8 @@ export class NV9BillValidator extends EventEmitter {
     this._notePathOpen = false;
     this._noteHeld = false;
     this.updateStatus('enabled');
+
+    this.ssp.startPolling(POLL_INTERVAL_MS, (events) => this.handlePollEvents(events));
     this.emit('ready');
   }
 }

@@ -14,10 +14,12 @@
     "format": "prettier --write \"**/*.{ts,vue,json,md,yml,yaml}\"",
     "format:check": "prettier --check \"**/*.{ts,vue,json,md,yml,yaml}\"",
     "clean": "turbo run clean && rm -rf node_modules",
-    "rebuild:node": "pnpm rebuild better-sqlite3 @serialport/bindings-cpp @serialport/bindings 2>/dev/null || true",
+    "rebuild:node": "pnpm rebuild better-sqlite3 @serialport/bindings-cpp 2>/dev/null || true",
     "scan-devices": "pnpm run rebuild:node; tsx scripts/scan-devices.ts",
     "list-ports": "pnpm run rebuild:node; tsx scripts/list-ports.ts",
     "test:nv9": "pnpm run rebuild:node; tsx scripts/test-nv9.ts",
+    "find-printers": "pnpm run rebuild:node; tsx scripts/find-printers.ts",
+    "test:printer": "pnpm run rebuild:node; tsx scripts/test-printer.ts",
     "prepare": "husky"
   },
   "lint-staged": {

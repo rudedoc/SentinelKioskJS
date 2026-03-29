@@ -1,18 +1,21 @@
 /**
  * NV9 Bill Validator — Isolated Hardware Test
  *
- * Tests the NV9Adapter in isolation without the full Electron app.
+ * Reads configuration from config.json (billValidator section).
+ * Falls back to NV9_PORT env var or hardcoded defaults.
  *
  * Usage:
- *   1. Connect the NV9 via USB-to-serial
- *   2. Find the port:  pnpm tsx scripts/list-ports.ts
- *   3. Run:            NV9_PORT=/dev/cu.usbserial-XXXX pnpm tsx scripts/test-nv9.ts
+ *   1. Configure in config.json (hardware.billValidator)
+ *   2. Run: pnpm test:nv9
  *
- * Or edit the PORT constant below.
+ *   Or override the port:
+ *   NV9_PORT=/dev/tty.usbserial-XXXX pnpm test:nv9
  *
  * Press Ctrl+C to gracefully shut down.
  */
 
+import { existsSync, readFileSync } from 'fs';
+import { resolve } from 'path';
 import winston from 'winston';
 import {
   NV9Adapter,
@@ -20,21 +23,68 @@ import {
 } from '../apps/electron/src/main/hardware/adapters/bill-validators/NV9Adapter';
 import type { BillEvent } from '../packages/shared-types/src/hardware';
 
-// ── Configuration ──
+// ── Load config from config.json ──
 
-const PORT = process.env.NV9_PORT || '/dev/cu.usbserial-1420';
+interface ConfigFile {
+  hardware?: {
+    billValidator?: {
+      config?: {
+        port?: string;
+        baudRate?: number;
+        channelValues?: Record<string, number>;
+        currency?: string;
+        escrow?: boolean;
+        maxReconnectAttempts?: number;
+        reconnectDelay?: number;
+      };
+    };
+  };
+}
 
-const CHANNEL_VALUES: Record<number, number> = {
-  1: 5, // €5
-  2: 10, // €10
-  3: 20, // €20
-  4: 50, // €50
-  5: 100, // €100
-  6: 200, // €200
-  7: 500, // €500
-};
+function loadNV9Config(): NV9AdapterConfig {
+  const configPath = resolve(__dirname, '..', 'config.json');
+  let fileConfig: ConfigFile = {};
 
-const CURRENCY = 'EUR';
+  if (existsSync(configPath)) {
+    try {
+      fileConfig = JSON.parse(readFileSync(configPath, 'utf-8')) as ConfigFile;
+    } catch {
+      // Fall through to defaults
+    }
+  }
+
+  const nv9 = fileConfig.hardware?.billValidator?.config;
+
+  // Channel values from config come as string keys — convert to number keys
+  let channelValues: Record<number, number> = {
+    1: 5,
+    2: 10,
+    3: 20,
+    4: 50,
+    5: 100,
+    6: 200,
+    7: 500,
+  };
+
+  if (nv9?.channelValues) {
+    channelValues = {};
+    for (const [k, v] of Object.entries(nv9.channelValues)) {
+      channelValues[Number(k)] = v;
+    }
+  }
+
+  return {
+    port: process.env.NV9_PORT || nv9?.port || '/dev/tty.usbserial-AI05HDWJ',
+    baudRate: nv9?.baudRate ?? 9600,
+    channelValues,
+    currency: nv9?.currency ?? 'EUR',
+    escrow: nv9?.escrow ?? false,
+    maxReconnectAttempts: nv9?.maxReconnectAttempts ?? 10,
+    reconnectDelay: nv9?.reconnectDelay ?? 3000,
+  };
+}
+
+const config = loadNV9Config();
 
 // ── Logger ──
 
@@ -67,8 +117,8 @@ adapter.on('bill:inserted', (event: BillEvent) => {
 adapter.on('bill:stacked', (event: BillEvent) => {
   totalCents += event.amountCents;
   console.log('');
-  logger.info(`★ CREDIT: ${event.amountCents / 100} ${event.currency}`);
-  logger.info(`  Running total: ${totalCents / 100} ${CURRENCY}`);
+  logger.info(`CREDIT: ${event.amountCents / 100} ${event.currency}`);
+  logger.info(`  Running total: ${totalCents / 100} ${config.currency}`);
   console.log('');
 });
 
@@ -90,26 +140,18 @@ adapter.on('error', (err) => {
 
 // ── Start ──
 
-const config: NV9AdapterConfig = {
-  port: PORT,
-  baudRate: 9600,
-  channelValues: CHANNEL_VALUES,
-  currency: CURRENCY,
-  escrow: false,
-  maxReconnectAttempts: 10,
-  reconnectDelay: 3000,
-};
-
 console.log('╔══════════════════════════════════════════╗');
 console.log('║     NV9 Adapter — Isolated Test          ║');
 console.log('╚══════════════════════════════════════════╝');
 console.log('');
-logger.info(`Port: ${PORT}`);
+logger.info(`Port: ${config.port}`);
+logger.info(`Baud: ${config.baudRate}`);
 logger.info(
-  `Channels: ${Object.entries(CHANNEL_VALUES)
-    .map(([ch, v]) => `${ch}=€${v}`)
+  `Channels: ${Object.entries(config.channelValues)
+    .map(([ch, v]) => `${ch}=${config.currency}${v}`)
     .join(', ')}`,
 );
+logger.info(`Escrow: ${config.escrow ?? false}`);
 console.log('');
 
 adapter
@@ -128,7 +170,7 @@ const shutdown = async () => {
   console.log('');
   logger.info('Shutting down...');
   await adapter.disconnect();
-  logger.info(`Session total: ${totalCents / 100} ${CURRENCY}`);
+  logger.info(`Session total: ${totalCents / 100} ${config.currency}`);
   logger.info('Done. Goodbye.');
   process.exit(0);
 };
