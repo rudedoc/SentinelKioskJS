@@ -9,6 +9,11 @@ import { MockCoinValidatorAdapter } from './adapters/coin-validators/MockCoinVal
 import { MockPrinterAdapter } from './adapters/printers/MockPrinterAdapter';
 import { MockNFCAdapter } from './adapters/nfc/MockNFCAdapter';
 import { MockBarcodeAdapter } from './adapters/barcode/MockBarcodeAdapter';
+import { EpsonTM88VAdapter } from './adapters/printers/models/EpsonTM88VAdapter';
+import { ThermalTL60Adapter } from './adapters/printers/models/ThermalTL60Adapter';
+import { CustomVKP80Adapter } from './adapters/printers/models/CustomVKP80Adapter';
+import { SeikoRP10Adapter } from './adapters/printers/models/SeikoRP10Adapter';
+import { StarTSP100Adapter } from './adapters/printers/models/StarTSP100Adapter';
 
 type AdapterConstructor = new (deviceId: string, logger: Logger) => HardwareAdapter;
 
@@ -42,6 +47,11 @@ export function buildAdapterFactory(): AdapterFactory {
 
   // Real adapters
   factory.registerAdapter('NV9', NV9Adapter);
+  factory.registerAdapter('EpsonTM88V', EpsonTM88VAdapter);
+  factory.registerAdapter('ThermalTL60', ThermalTL60Adapter);
+  factory.registerAdapter('CustomVKP80', CustomVKP80Adapter);
+  factory.registerAdapter('SeikoRP10', SeikoRP10Adapter);
+  factory.registerAdapter('StarTSP100', StarTSP100Adapter);
 
   // Mock adapters
   factory.registerAdapter('MockBillValidator', MockBillValidatorAdapter);

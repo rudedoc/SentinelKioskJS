@@ -47,6 +47,11 @@ describe('buildAdapterFactory', () => {
     const names = factory.getRegisteredNames();
 
     expect(names).toContain('NV9');
+    expect(names).toContain('EpsonTM88V');
+    expect(names).toContain('ThermalTL60');
+    expect(names).toContain('CustomVKP80');
+    expect(names).toContain('SeikoRP10');
+    expect(names).toContain('StarTSP100');
     expect(names).toContain('MockBillValidator');
     expect(names).toContain('MockCoinValidator');
     expect(names).toContain('MockPrinter');

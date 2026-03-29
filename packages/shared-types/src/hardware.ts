@@ -102,6 +102,9 @@ export interface SerialAdapterConfig {
 export interface USBAdapterConfig {
   vendorId: number;
   productId: number;
+  interface?: number;
+  inEndpoint?: number;
+  outEndpoint?: number;
 }
 
 export interface NetworkAdapterConfig {
