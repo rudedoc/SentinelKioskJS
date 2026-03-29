@@ -10,7 +10,7 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit",
-    "pretest": "pnpm rebuild better-sqlite3 @serialport/bindings 2>/dev/null || true",
+    "pretest": "pnpm rebuild better-sqlite3 @serialport/bindings-cpp @serialport/bindings 2>/dev/null || true",
     "test": "vitest run",
     "test:watch": "vitest watch",
     "test:coverage": "vitest run --coverage",
@@ -23,6 +23,7 @@
     "better-sqlite3": "^11.7.0",
     "electron-updater": "^6.3.0",
     "encrypted-smiley-secure-protocol": "^0.0.11",
+    "serialport": "^13.0.0",
     "uuid": "^11.0.0",
     "winston": "^3.17.0",
     "winston-daily-rotate-file": "^5.0.0"

@@ -14,6 +14,10 @@
     "format": "prettier --write \"**/*.{ts,vue,json,md,yml,yaml}\"",
     "format:check": "prettier --check \"**/*.{ts,vue,json,md,yml,yaml}\"",
     "clean": "turbo run clean && rm -rf node_modules",
+    "rebuild:node": "pnpm rebuild better-sqlite3 @serialport/bindings-cpp @serialport/bindings 2>/dev/null || true",
+    "scan-devices": "pnpm run rebuild:node; tsx scripts/scan-devices.ts",
+    "list-ports": "pnpm run rebuild:node; tsx scripts/list-ports.ts",
+    "test:nv9": "pnpm run rebuild:node; tsx scripts/test-nv9.ts",
     "prepare": "husky"
   },
   "lint-staged": {
@@ -33,6 +37,7 @@
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0",
     "prettier": "^3.8.1",
+    "tsx": "^4.21.0",
     "turbo": "^2.8.20",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.57.2"
